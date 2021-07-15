@@ -17,6 +17,8 @@
 #include <infiniband/verbs.h>
 #include "sizes.h"
 
+#include <netinet/in.h>
+
 #define FAIL_LIM 100			// # of failed polls before a server advances its pipeline
 #define ZIPF 0					// Use ZIPF distributed workload
 #define KEY_SIZE 2				// In long long units

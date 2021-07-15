@@ -107,7 +107,15 @@ void client_exch_dest(struct ctrl_blk *cb)
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
 		CPE(sockfd < 0, "Error opening socket", 0);
 	
-		server = gethostbyname(server_name);
+		//server = gethostbyname(server_name);    // modified by yyt 
+		struct in_addr addr;
+		if (inet_pton(AF_INET, server_name, &addr) <= 0) {
+    		printf("inet_pton error:%s\n", strerror(errno));
+    		return;
+    	}
+		server = gethostbyaddr((const char*)&addr, sizeof(addr), AF_INET);
+		
+		
 		CPE(server == NULL, "No such host", 0);
 	
 		bzero((char *) &serv_addr, sizeof(serv_addr));

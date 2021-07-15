@@ -1,7 +1,7 @@
 # Action:
 #	1. Run num_processes client processes
 
-num_processes=3			# Number of processes per client machine
+num_processes=1			# Number of processes per client machine
 export ROCE=0
 export APT=1
 

@@ -39,7 +39,7 @@
 #endif
 
 #define NUM_CLIENTS 1			// Number of client processes
-#define NUM_SERVERS 1			// Number of server processes
+#define NUM_SERVERS 3			// Number of server processes
 
 #define Q_DEPTH 1024			// Size of all created queues
 #define S_DEPTH 512

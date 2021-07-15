@@ -5,10 +5,12 @@ num_processes=1			# Number of processes per client machine
 export ROCE=0
 export APT=1
 
+
 hi=`expr $num_processes - 1`
 for i in `seq 0 $hi`; do
 	id=`expr $@ \* $num_processes + $i`
 	echo "Running client id $id"
+	mkdirs client-tput/client-$id
 	touch client-tput/client-$id
 
 	if [ $APT -eq 1 ]	# There is only one socket on Apt's r320 nodes

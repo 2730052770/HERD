@@ -2,7 +2,7 @@
 #	1. Run server processes on the server machine
 #	2. ssh into client machines and run the run-machine.sh script
 
-shm-rm.sh				# Remove hugepages
+# shm-rm.sh				# Remove hugepages
 export ROCE=0			# Don't use RoCE on Apt
 export APT=1
 

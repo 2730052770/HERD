@@ -40,7 +40,7 @@ done
 
 for i in `seq 1 $NUM_CLIENT_MACHINES`; do
 	client_id=`expr $i - 1`
-	ssh -oStrictHostKeyChecking=no server$i "cd ~/HERD; ./run-machine.sh $client_id" &
+	ssh server$i "cd ~/HERD; ./run-machine.sh $client_id" &
 	echo "Starting client $client_id"
 
 	# Removing this sleep sometimes causes the tput to drop drastically.

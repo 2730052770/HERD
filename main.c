@@ -531,6 +531,7 @@ int main(int argc, char *argv[])
 		// The clients don't need an address handle for the servers UD QPs
 		ctx->local_dgram_qp_attrs = (struct qp_attr *) malloc(NUM_SERVERS * S_QPA);
 	} else {
+		ctx->is_client = 0;
 		ctx->sock_port = atoi(argv[2]);
 		ctx->num_conn_qps = NUM_CLIENTS;
 		ctx->num_remote_dgram_qps = NUM_CLIENTS;
@@ -588,6 +589,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Exchange queue pair attributes
+	fprintf(stderr,"%s\n",ctx->is_client?"in exch_client":"in exch_server");
+	fflush(stderr);
 	if(ctx->is_client) {
 		client_exch_dest(ctx);
 	} else {
@@ -633,12 +636,12 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-
+	fprintf(stderr,"%s\n",ctx->is_client?"in exch_client":"in exch_server");
 	if(ctx->is_client) {
 		run_client(ctx);
 	} else {
 		run_server(ctx);
 	}
-
+	fprintf(stderr,"exited seccussfully\n");
 	return 0;
 }

@@ -14,7 +14,7 @@ mkdir client-tput
 
 for i in `seq 1 $NUM_SERVERS`; do
 	id=`expr $i - 1`
-	sock_port=`expr 5500 + $i - 1`
+	sock_port=`expr 13000 + $i - 1`
 
 	if [ $APT -eq 1 ]		# There is only one socket on Apt's r320 nodes
 	then

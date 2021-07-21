@@ -108,26 +108,29 @@ void client_exch_dest(struct ctrl_blk *cb)
 		CPE(sockfd < 0, "Error opening socket", 0);
 	
 		//server = gethostbyname(server_name);    // modified by yyt 
-		struct in_addr addr;
-		if (inet_pton(AF_INET, server_name, &addr) <= 0) {
-    		printf("inet_pton error:%s\n", strerror(errno));
-    		return;
-    	}
-		server = gethostbyaddr((const char*)&addr, sizeof(addr), AF_INET);
-		
-		
+		/*
+		char p[30];
+		inet_pton(AF_INET, server_name, p);
+		server = gethostbyaddr(p, strlen(p), AF_INET);
+
 		CPE(server == NULL, "No such host", 0);
-	
+		*/
+
 		bzero((char *) &serv_addr, sizeof(serv_addr));    
 		serv_addr.sin_family = AF_INET;// ipv4 
-		bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr,
-			server->h_length);
+
+		inet_aton(server_name, &serv_addr.sin_addr);///////////
+
+
+		/* bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr,
+			server->h_length);  */
+
 		serv_addr.sin_port = htons(sock_port);
-        
+
 		if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr))) {
 			fprintf(stderr, "ERROR connecting\n");
 		}
-
+		puts("after connect");
 		// Get STAG
 		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {// from server 
 			fprintf(stderr, "ERROR reading stag from socket\n");

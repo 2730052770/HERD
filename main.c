@@ -428,7 +428,8 @@ void run_client(struct ctrl_blk *cb)
 
 		// Although each client has NUM_SERVERS conn_qps, they only issue RDMA
 		// WRITEs to the 0th server
-		ret = ibv_post_send(cb->conn_qp[0], &cb->wr, &bad_send_wr);
+		ret = ibv_post_send(cb->conn_qp[0], &cb->wr, &bad_send_wr);// the rest queues maybe used in CREW modulo
+		                                                          // the num of queue (in use) is NUM_CLIENT
         // server shares memory, so need only one QP for WRITE.
         // SEND/WRITE/READ is all through this by set wr.opcode
 		CPE(ret, "ibv_post_send error", ret);
@@ -436,7 +437,7 @@ void run_client(struct ctrl_blk *cb)
 		num_req_arr[sn]++;
 		num_req ++;
 
-		if(num_req - num_resp == WINDOW_SIZE) {
+		if(num_req - num_resp == WINDOW_SIZE) {   // 4 items a group
 			int rws = num_resp & WINDOW_SIZE_;		// Response window slot
 			int rsn = sn_arr[rws];					// Response server number
 			int ras = (rsn * WINDOW_SIZE) + (num_resp_arr[rsn] & WINDOW_SIZE_);
@@ -449,7 +450,7 @@ void run_client(struct ctrl_blk *cb)
 					fprintf(stderr, "Wait for iter %d at client %d GET = %lld\n", 
 						num_resp + 1, cb->id, pndng_keys[rws]);
 				}
-				recv_comps = ibv_poll_cq(cb->dgram_cq[rsn], 1, wc);
+				recv_comps = ibv_poll_cq(cb->dgram_cq[rsn], 1, wc);// clear complete queue
 			}
 			if(wc[0].status != 0) {
 				fprintf(stderr, "Bad recv wc status %d\n", wc[0].status);
@@ -459,7 +460,7 @@ void run_client(struct ctrl_blk *cb)
 			// If it was a GET, and it succeeded, check it!
 			if(pndng_keys[rws] != 0) {
 				if(client_resp_area[ras].kv.len < GET_FAIL_LEN_1) {
-					if(!valcheck(client_resp_area[ras].kv.value, 
+					if(!valcheck(client_resp_area[ras].kv.value,           // check value
 						pndng_keys[rws])) {
 						fprintf(stderr, "Client %d get() failed in iter %d. ", 
 							cb->id, num_resp);
@@ -480,13 +481,13 @@ void run_client(struct ctrl_blk *cb)
 			if((num_resp_arr[rsn] & CL_SEMI_BTCH_SZ_) == 0) {
 				int recv_i;
 				for(recv_i = 0; recv_i < CL_SEMI_BTCH_SZ; recv_i ++) {
-					post_recv(cb, recv_i & WINDOW_SIZE_, rsn);
+					post_recv(cb, recv_i & WINDOW_SIZE_, rsn);     // prepare for next SEND
 				}
 			}
 
 			memset((char *) &client_resp_area[ras], 0, sizeof(struct UD_KV));
 
-			clock_gettime(CLOCK_REALTIME, &op_end[rws]);
+			clock_gettime(CLOCK_REALTIME, &op_end[rws]);                     // calculate latency
 			LL new_nsec = (op_end[rws].tv_sec - op_start[rws].tv_sec)* 1000000000 
 				+ (op_end[rws].tv_nsec - op_start[rws].tv_nsec);
 			total_nsec += new_nsec;
@@ -524,7 +525,15 @@ int main(int argc, char *argv[])
 		ctx->num_conn_qps = NUM_SERVERS;
 		ctx->num_remote_dgram_qps = NUM_SERVERS;
 		ctx->num_local_dgram_qps = NUM_SERVERS;
-
+        /* 
+           Why not 1? 
+           Maybe because, when receiving SEND from different SERVER, 
+           their is conflict both in queue and in memory.
+           So, just like the server mechine has (in fact shares) NUM_CLIENT in-use queues(others not in-use), 
+           a client should has NUM_SERVER queues.
+           However, when sending, their is no conflict so 1 is OK.
+           (So every client use one connected queue for WRITE and all server share a UD response-queue)
+        */
 		ctx->local_conn_qp_attrs = (struct qp_attr *) malloc(NUM_SERVERS * S_QPA);
 		ctx->remote_conn_qp_attrs = (struct qp_attr *) malloc(NUM_SERVERS * S_QPA);
 		

@@ -31,7 +31,7 @@ void process_pipeline(struct ctrl_blk *cb)
 	for(k = 1; k <= 2; k++) {
 		int ind = (pipeline_index - k) & 1;
 		int req_type = pipeline[ind].req_type;
-
+        // dummy == fake
 		if(req_type == DUMMY_TYPE || req_type == EMPTY_TYPE) {
 			if(k == 2) {		// Output the dummy pipeline item
 				pipeline_out = &pipeline[ind];
@@ -45,11 +45,11 @@ void process_pipeline(struct ctrl_blk *cb)
 		// out later.
 		key[KEY_SIZE - 1] = pipeline[ind].poll_val;
 				
-		int key_bkt_num = KEY_TO_BUCKET(key[0]);
-		int key_tag = KEY_TO_TAG(key[0]);
+		int key_bkt_num = KEY_TO_BUCKET(key[0]);// bucket index
+		int key_tag = KEY_TO_TAG(key[0]);// identity (unique in one bucket)
 
 		// Access the bucket as an array of 8 longs
-		LL *key_bkt = (LL *) &ht_index[key_bkt_num];
+		LL *key_bkt = (LL *) &ht_index[key_bkt_num];// hash_table (1st random access) 
 
 		if(k == 1) {
 			if(req_type == PUT_TYPE) {	/*PUT*/
@@ -67,13 +67,13 @@ void process_pipeline(struct ctrl_blk *cb)
 						best_slot = slot;
 						break;
 					}
-					LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);
+					LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);// calculate priority for LRU
 					if(log_head - log_offset > max_diff) {
 						max_diff = log_head - log_offset;
 						best_slot = slot;
 					}
 					// While insertion, we remove collisions.
-					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);
+					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// same as KEY_TO_TAG()
 					if(slot_tag == key_tag) {
 						key_bkt[slot] = INVALID_SLOT;
 					}
@@ -82,29 +82,30 @@ void process_pipeline(struct ctrl_blk *cb)
 				// Prepare the slot. Assuming that log_head is less than 2^48,
 				// the offset stored in the slot is in [0, 2^48). 
 				key_bkt[best_slot] = key_tag;
-				key_bkt[best_slot] |= (log_head << 16);
+				key_bkt[best_slot] |= (log_head << 16);// time tag
 			
-				// Append to log
+				// Append to log  
 				memcpy(&ht_log[log_head & LOG_SIZE_], pipeline[ind].kv, S_KV);
+                //no inplace modify, to reduce random access, but increase memory gap
 				log_head += S_KV;
 			} else {	/*GET*/
 				int slot, key_in_index = 0;
-				for(slot = SLOTS_PER_BKT - 1; slot >= 0; slot--) {
+				for(slot = SLOTS_PER_BKT - 1; slot >= 0; slot--) {// why to 0? 
 					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);
 					if(slot_tag == key_tag) {
 						LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);
-						if(log_head - log_offset > LOG_SIZE) {
+						if(log_head - log_offset > LOG_SIZE) {// be covered and recycled, can't find out
 							break;
 						}
-						__builtin_prefetch(&ht_log[log_offset & LOG_SIZE_], 0, 3);
+						__builtin_prefetch(&ht_log[log_offset & LOG_SIZE_], 0, 3);// prefetch hash_table log
 
 						key_in_index = 1;
-						pipeline[ind].get_slot = slot;
+						pipeline[ind].get_slot = slot;// store result
 						break;
 					}
 				}
 				if(key_in_index == 0) {
-					server_resp_area[ras].len = GET_FAIL_LEN_1;
+					server_resp_area[ras].len = GET_FAIL_LEN_1;// tag not found 
 				}
 			}
 		}	// END 1st pipeline stage
@@ -114,13 +115,13 @@ void process_pipeline(struct ctrl_blk *cb)
 				int key_still_in_index = 0, key_in_log = 0;
 
 				int slot_tag = SLOT_TO_TAG(key_bkt[slot]);
-				if(slot_tag == key_tag) {
+				if(slot_tag == key_tag) {// why check again??? because may not be found, so the slot are old.
 					key_still_in_index = 1;
 					LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);
 					LL log_addr = log_offset & LOG_SIZE_;
 					
-					LL *log_key = (LL *) &ht_log[log_addr + KV_KEY_OFFSET];
-					int valid = (log_key[0] == key[0]);
+					LL *log_key = (LL *) &ht_log[log_addr + KV_KEY_OFFSET];    // fetch : yyt
+					int valid = (log_key[0] == key[0]);// check the key match
 					#if(KEY_SIZE == 2)
 						valid &= (log_key[1] == key[1]);
 					#endif
@@ -129,7 +130,7 @@ void process_pipeline(struct ctrl_blk *cb)
 						// Copy the log straight to the response and record
 						// that this has been done.
 						SET_PL_IT_MEMCPY_DONE(pipeline[ind]);
-						memcpy((char *) &server_resp_area[ras], &ht_log[log_addr], S_KV);
+						memcpy((char *) &server_resp_area[ras], &ht_log[log_addr], S_KV); // set response
 					}
 				}
 				if(key_still_in_index == 0 || key_in_log == 0) {
@@ -144,7 +145,7 @@ void process_pipeline(struct ctrl_blk *cb)
 
 void run_server(struct ctrl_blk *cb)
 {
-	if(cb->id == 0) {
+	if(cb->id == 0) {// 0th process one server do nothing (only creat QP which receives RDMA WRITE) 
 		sleep(1000000000);
 	}
 
@@ -164,7 +165,7 @@ void run_server(struct ctrl_blk *cb)
 		pipeline[i].req_type = EMPTY_TYPE;
 	}
 
-	for(i = 0; i < NUM_CLIENTS; i++) {
+	for(i = 0; i < NUM_CLIENTS; i++) {// one window contains W entries for one client 
 		req_lo[i] = (cb->id * (WINDOW_SIZE * NUM_CLIENTS)) + (i * WINDOW_SIZE);
 		req_num[i] = 0;
 	}
@@ -184,10 +185,10 @@ void run_server(struct ctrl_blk *cb)
 			}
 
 			// Poll for a new request
-			int req_ind = req_lo[i] + (req_num[i] & WINDOW_SIZE_);
+			int req_ind = req_lo[i] + (req_num[i] & WINDOW_SIZE_);//offset = req_num % window_size
 			if((char) server_req_area[req_ind].key[KEY_SIZE - 1] == 0) {
 				failed_polls ++;
-				if(failed_polls < FAIL_LIM) {
+				if(failed_polls < FAIL_LIM) {//failed_polls == 100 -> send "nope"
 					continue;
 				}
 			}
@@ -199,7 +200,7 @@ void run_server(struct ctrl_blk *cb)
 				// We only get here if we find a new valid request. Therefore,
 				// it's OK to use the len field to determine request type
 				if(server_req_area[req_ind].len > 0) {
-					__builtin_prefetch(&ht_index[key_bkt_num], 1, 3);
+					__builtin_prefetch(&ht_index[key_bkt_num], 1, 3);// prefetch hash_table index
 				} else {
 					__builtin_prefetch(&ht_index[key_bkt_num], 0, 3);
 				}
@@ -228,8 +229,8 @@ void run_server(struct ctrl_blk *cb)
 				}
 
 				if(pipeline_out->req_type == PUT_TYPE) {		// PUT response
-					cb->sgl.addr = (uint64_t) (unsigned long) &server_resp_area[ras];
-					cb->wr.sg_list->length = 1;
+					cb->sgl.addr = (uint64_t) (unsigned long) &server_resp_area[ras]; // set in pipeline
+					cb->wr.sg_list->length = 1;// ???
 				} else if(pipeline_out->req_type == GET_TYPE) {
 					cb->sgl.addr = (uint64_t) (unsigned long) &server_resp_area[ras];
 					cb->wr.sg_list->length = KV_KEY_OFFSET;
@@ -272,7 +273,7 @@ void run_server(struct ctrl_blk *cb)
 
 				req_num[i] ++;
 			} else {
-				pipeline[pipeline_index].req_type = DUMMY_TYPE;
+				pipeline[pipeline_index].req_type = DUMMY_TYPE;// nope
 				failed_polls = 0;
 			}
 
@@ -376,14 +377,14 @@ void run_client(struct ctrl_blk *cb)
 		}
 
 		// First, we PUT all our keys.
-		if(rand() % 100 <= PUT_PERCENT || iter < NUM_KEYS) {
+		if(rand() % 100 <= PUT_PERCENT || iter < NUM_KEYS) {// 2^20
 			req_kv->key[0] = key_corpus[key_i];
 			#if(KEY_SIZE == 2)
 				req_kv->key[1] = key_corpus[key_i];
 			#endif
 			req_kv->len = VALUE_SIZE;
 			memset((char *) req_kv->value, (char) key_corpus[key_i], VALUE_SIZE);
-			pndng_keys[iter_] = 0;
+			pndng_keys[iter_] = 0;// ???
 			key_i = (key_i + 1) & NUM_KEYS_;
 		} else {
 			key_i = rand() & NUM_KEYS_;
@@ -392,11 +393,11 @@ void run_client(struct ctrl_blk *cb)
 				req_kv->key[1] = key_corpus[key_i];
 			#endif
 			req_kv->len = 0;
-			memset((char *) req_kv->value, 0, VALUE_SIZE);
-			pndng_keys[iter_] = req_kv->key[0];
+			memset((char *) req_kv->value, 0, VALUE_SIZE);// every value is OK
+			pndng_keys[iter_] = req_kv->key[0];// ???
 		}
 		
-		sn = KEY_TO_SERVER(req_kv->key[0]);
+		sn = KEY_TO_SERVER(req_kv->key[0]);// [1, num_servers - 1]
 		sn_arr[iter_] = sn;
 
 		int req_offset = (sn * WINDOW_SIZE * NUM_CLIENTS) + 
@@ -416,7 +417,7 @@ void run_client(struct ctrl_blk *cb)
 			cb->wr.sg_list->length = S_KV - KV_KEY_OFFSET;
 			cb->wr.wr.rdma.remote_addr = server_req_area_stag[0].buf + 
 				(req_offset * S_KV) + KV_KEY_OFFSET;
-		} else {
+		} else { // PUT
 			cb->sgl.addr = (uint64_t) (unsigned long) req_kv;
 			cb->wr.sg_list->length = S_KV;
 			cb->wr.wr.rdma.remote_addr = server_req_area_stag[0].buf + 
@@ -428,6 +429,8 @@ void run_client(struct ctrl_blk *cb)
 		// Although each client has NUM_SERVERS conn_qps, they only issue RDMA
 		// WRITEs to the 0th server
 		ret = ibv_post_send(cb->conn_qp[0], &cb->wr, &bad_send_wr);
+        // server shares memory, so need only one QP for WRITE.
+        // SEND/WRITE/READ is all through this by set wr.opcode
 		CPE(ret, "ibv_post_send error", ret);
 
 		num_req_arr[sn]++;
@@ -554,18 +557,19 @@ int main(int argc, char *argv[])
 	// Create RDMA (request and response) regions 
 	setup_buffers(ctx);
 
-	union ibv_gid my_gid= get_gid(ctx->context);
+	union ibv_gid my_gid = get_gid(ctx->context);
 
 	// Collect local queue pair attributes
+	// prepare for "INIT -> RTR" 
 	for(i = 0; i < ctx->num_conn_qps; i++) {
 		ctx->local_conn_qp_attrs[i].gid_global_interface_id = 
 			my_gid.global.interface_id;
 		ctx->local_conn_qp_attrs[i].gid_global_subnet_prefix = 
 			my_gid.global.subnet_prefix;
 
-		ctx->local_conn_qp_attrs[i].lid = get_local_lid(ctx->context);
-		ctx->local_conn_qp_attrs[i].qpn = ctx->conn_qp[i]->qp_num;
-		ctx->local_conn_qp_attrs[i].psn = lrand48() & 0xffffff;
+		ctx->local_conn_qp_attrs[i].lid = get_local_lid(ctx->context);// 注意这个attr struct是作者写的 
+		ctx->local_conn_qp_attrs[i].qpn = ctx->conn_qp[i]->qp_num;// QP number
+		ctx->local_conn_qp_attrs[i].psn = lrand48() & 0xffffff;// starting receive packet sequence number
 		fprintf(stderr, "Local address of conn QP %d: ", i);
 		print_qp_attr(ctx->local_conn_qp_attrs[i]);
 	}

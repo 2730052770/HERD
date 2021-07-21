@@ -118,31 +118,31 @@ void client_exch_dest(struct ctrl_blk *cb)
 		
 		CPE(server == NULL, "No such host", 0);
 	
-		bzero((char *) &serv_addr, sizeof(serv_addr));
-		serv_addr.sin_family = AF_INET;
+		bzero((char *) &serv_addr, sizeof(serv_addr));    
+		serv_addr.sin_family = AF_INET;// ipv4 
 		bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr,
 			server->h_length);
 		serv_addr.sin_port = htons(sock_port);
-	
+        
 		if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr))) {
 			fprintf(stderr, "ERROR connecting\n");
 		}
 
 		// Get STAG
-		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {
+		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {// from server 
 			fprintf(stderr, "ERROR reading stag from socket\n");
 		}
 		fprintf(stderr, "Client %d <-- Server %d's stag: ", cb->id, i);
 		print_stag(server_req_area_stag[i]);
 	
 		// Exchange attributes for connected QPs
-		if(write(sockfd, &cb->local_conn_qp_attrs[i], S_QPA) < 0) {
+		if(write(sockfd, &cb->local_conn_qp_attrs[i], S_QPA) < 0) {// 
 			fprintf(stderr, "ERROR writing conn qp_attr to socket\n");
 		}
 		fprintf(stderr, "Client %d --> Server %d conn qp_attr: ", cb->id, i);
 		print_qp_attr(cb->local_conn_qp_attrs[i]);
 
-		if(read(sockfd, &cb->remote_conn_qp_attrs[i], S_QPA) < 0) {
+		if(read(sockfd, &cb->remote_conn_qp_attrs[i], S_QPA) < 0) {//
 			fprintf(stderr, "Error reading conn qp_attr from socket");
 		}
 		fprintf(stderr, "Client %d <-- Server %d's conn qp_attr: ", cb->id, i);
@@ -150,7 +150,7 @@ void client_exch_dest(struct ctrl_blk *cb)
 		
 		// Send datagram QP attrs. Clients don't need server's UD QP attrs
 		// The client sends a different UD QP to each server
-		if(write(sockfd, &cb->local_dgram_qp_attrs[i], S_QPA) < 0) {
+		if(write(sockfd, &cb->local_dgram_qp_attrs[i], S_QPA) < 0) {//
 			fprintf(stderr, "ERROR writing dgram qp_attr to socket\n");
 		}
 		fprintf(stderr, "Client %d --> Server %d UD qp_attr: ", cb->id, i);
@@ -185,6 +185,7 @@ void server_exch_dest(struct ctrl_blk *cb)
 
 	if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 		fprintf(stderr, "ERROR on binding");
+		
 	}
 	printf("Server %d listening on port %d\n", cb->id, cb->sock_port);
 	listen(sockfd, NUM_CLIENTS);
@@ -208,6 +209,7 @@ void server_exch_dest(struct ctrl_blk *cb)
 			fprintf(stderr, "ERROR writing stag to socket\n");
 		}
 		fprintf(stderr, "Server %d --> Client %d stag: ", cb->id, i);
+        // because the .sh file has a delay when calling client
 		print_stag(server_req_area_stag[0]);
 
 		// Exchange attributes for connected QPs
@@ -218,7 +220,7 @@ void server_exch_dest(struct ctrl_blk *cb)
 		print_qp_attr(cb->remote_conn_qp_attrs[i]);
 		
 		if(connect_ctx(cb, cb->local_conn_qp_attrs[i].psn, 
-			cb->remote_conn_qp_attrs[i], i)) {
+			cb->remote_conn_qp_attrs[i], i)) {               // connect QP
 			fprintf(stderr, "Couldn't connect to remote QP\n");
 			exit(0);
 		}

@@ -80,7 +80,9 @@ void create_qp(struct ctrl_blk *ctx)
 			.recv_cq = ctx->conn_cq[i],
 			.cap     = {
 				.max_send_wr  = Q_DEPTH,
-				.max_recv_wr  = 1,
+				.max_recv_wr  = 1, // interesting, queueing are at sender side now.
+                // What I mean that "send" gets data locally and is easy to ensure locality,\
+                 whereas "recv" gets data from various remote locations and is not easy to ensure locality.
 				.max_send_sge = 1,
 				.max_recv_sge = 1,
 				.max_inline_data = S_KV < 256 ? S_KV : 256
@@ -110,7 +112,7 @@ void create_qp(struct ctrl_blk *ctx)
 				.max_recv_sge = 1,
 				.max_inline_data = S_KV < 256 ? S_KV : 256
 			},
-		.qp_type = IBV_QPT_UD
+            .qp_type = IBV_QPT_UD
 		};
 		ctx->dgram_qp[i] = ibv_create_qp(ctx->pd, &dgram_init_attr);
 		CPE(!ctx->dgram_qp[i], "Couldn't create datagram QP", 0);
@@ -121,11 +123,11 @@ void create_qp(struct ctrl_blk *ctx)
 void modify_qp_to_init(struct ctrl_blk *ctx)
 {
 	int i;
-	struct ibv_qp_attr dgram_attr = {
+	struct ibv_qp_attr dgram_attr = {// ??????
 		.qp_state		= IBV_QPS_INIT,
-		.pkey_index		= 0,
+		.pkey_index		= 0,// divide region of net by this number, maybe keeping it same is OK.
 		.port_num		= IB_PHYS_PORT,
-		.qkey 			= 0x11111111
+		.qkey 			= 0x11111111//It seems that it is "QUEUE KEY"? For datagram operation.
 	};
 
 	for(i = 0; i < ctx->num_local_dgram_qps; i++) {
@@ -169,7 +171,7 @@ int setup_buffers(struct ctrl_blk *cb)
 		client_req_area_mr = ibv_reg_mr(cb->pd, 
 			(char *) client_req_area, WINDOW_SIZE * S_KV, FLAGS);
 			
-		cb->wr.opcode = IBV_WR_RDMA_WRITE;
+		cb->wr.opcode = IBV_WR_RDMA_WRITE;//sample wr in client
 		cb->sgl.lkey = client_req_area_mr->lkey;
 		
 	} else {
@@ -178,12 +180,15 @@ int setup_buffers(struct ctrl_blk *cb)
 			exit(-1);
 		}
 
-		if(cb->id == 0) {
+		if(cb->id == 0) {// only one server process do this.
 			// Create and register master server's request region
-			int sid = shmget(REQ_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
+			int sid = shmget(REQ_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);//key possibly conflict
+            //4/2/1 = read/write/execute, for user/group/others
+            //shared memory for process communication (jin cheng)
+            //see http://support.sas.com/documentation/onlinedoc/ccompiler/doc700/html/lr2/z2101586.htm
 			CPE(sid < 0, "Master server request area shmget() failed\n", sid);
 
-			server_req_area = shmat(sid, 0, 0);
+			server_req_area = shmat(sid, 0, 0);// attach
 			memset((char *) server_req_area, 0, M_2);
 			server_req_area_mr = ibv_reg_mr(cb->pd, (char *)server_req_area, M_2, FLAGS);
 			CPE(!server_req_area_mr, "Failed to register server's request area", errno);
@@ -206,7 +211,7 @@ int setup_buffers(struct ctrl_blk *cb)
 			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *) server_resp_area, M_2, FLAGS);
 		}
 
-		cb->wr.opcode = IBV_WR_SEND;
+		cb->wr.opcode = IBV_WR_SEND;//sample wr in server
 		cb->sgl.lkey = server_resp_area_mr->lkey;
 	}
 

@@ -557,7 +557,9 @@ int main(int argc, char *argv[])
 	dev_list = ibv_get_device_list(NULL);
 	CPE(!dev_list, "Failed to get IB devices list", 0);
 
-	ib_dev = dev_list[is_roce() == 1 ? 1 : 0];
+    
+
+	ib_dev = dev_list[is_roce() == 1 ? 1 : 0];//服务器上有 [0] = mlx5_1, [1] = mlx5_0 两个 
 	CPE(!ib_dev, "IB device not found", 0);
 
 	// Create queue pairs and modify them to INIT
@@ -603,7 +605,7 @@ int main(int argc, char *argv[])
 	if(ctx->is_client) {
 		client_exch_dest(ctx);
 	} else {
-		server_exch_dest(ctx);
+		server_exch_dest(ctx); // and modify connected queues to RTR & RTS
 	}
 
 	// The server creates address handles for every clients' UD QP

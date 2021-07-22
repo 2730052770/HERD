@@ -63,7 +63,7 @@ int connect_ctx(struct ctrl_blk *ctx, int my_psn, struct qp_attr dest,
 		rtr_flags |= IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
 	}
 	if (ibv_modify_qp(ctx->conn_qp[qp_i], &conn_attr, rtr_flags)) {
-		fprintf(stderr, "Failed to modify QP to RTR\n");
+		fprintf(stderr, "Failed to modify QP to RTR\n");///////////////////////////////////////////////////
 		return 1;
 	}
 
@@ -132,7 +132,7 @@ void client_exch_dest(struct ctrl_blk *cb)
 		}
 		puts("after connect");
 		// Get STAG
-		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {// from server 
+		if(read(sockfd, &server_req_area_stag[i], S_STG) < 0) {// stag is the memory region info 
 			fprintf(stderr, "ERROR reading stag from socket\n");
 		}
 		fprintf(stderr, "Client %d <-- Server %d's stag: ", cb->id, i);
@@ -153,7 +153,8 @@ void client_exch_dest(struct ctrl_blk *cb)
 		
 		// Send datagram QP attrs. Clients don't need server's UD QP attrs
 		// The client sends a different UD QP to each server
-		if(write(sockfd, &cb->local_dgram_qp_attrs[i], S_QPA) < 0) {//
+		if(write(sockfd, &cb->local_dgram_qp_attrs[i], S_QPA) < 0) {
+        // don't need send back using datagram, and datagram doesn't need connection
 			fprintf(stderr, "ERROR writing dgram qp_attr to socket\n");
 		}
 		fprintf(stderr, "Client %d --> Server %d UD qp_attr: ", cb->id, i);
@@ -203,7 +204,7 @@ void server_exch_dest(struct ctrl_blk *cb)
 		}
 
 		// Exchange stag information
-		server_req_area_stag[0].buf = (uint64_t) (unsigned long) 
+		server_req_area_stag[0].buf = (uint64_t) (unsigned long)      // stag is the memory region info
 			server_req_area;
 		server_req_area_stag[0].rkey = server_req_area_mr->rkey;
 		server_req_area_stag[0].size = REQ_AC * S_KV;

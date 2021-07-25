@@ -193,6 +193,7 @@ void server_exch_dest(struct ctrl_blk *cb)
 	}
 	printf("Server %d listening on port %d\n", cb->id, cb->sock_port);
 	listen(sockfd, NUM_CLIENTS);
+					// wait queue size
 	
 	for(i = 0; i < NUM_CLIENTS; i++) {
 
@@ -204,10 +205,10 @@ void server_exch_dest(struct ctrl_blk *cb)
 		}
 
 		// Exchange stag information
-		server_req_area_stag[0].buf = (uint64_t) (unsigned long)      // stag is the memory region info
+		server_req_area_stag[0].buf = (uint64_t) (unsigned long long)      // stag is the memory region info
 			server_req_area;
 		server_req_area_stag[0].rkey = server_req_area_mr->rkey;
-		server_req_area_stag[0].size = REQ_AC * S_KV;
+		server_req_area_stag[0].size = REQ_MEMSIZE;
 	
 		if(write(newsockfd, &server_req_area_stag[0], S_STG) < 0) {
 			fprintf(stderr, "ERROR writing stag to socket\n");

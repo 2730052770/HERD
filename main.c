@@ -75,7 +75,7 @@ void process_pipeline(struct ctrl_blk *cb)
 					// While insertion, we remove collisions.
 					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// same as KEY_TO_TAG()
 					if(slot_tag == key_tag) {
-						key_bkt[slot] = INVALID_SLOT;
+						key_bkt[slot] = INVALID_SLOT;// why not just store index in key_bkt[slot]???
 					}
 				}
 
@@ -91,7 +91,7 @@ void process_pipeline(struct ctrl_blk *cb)
 			} else {	/*GET*/
 				int slot, key_in_index = 0;
 				for(slot = SLOTS_PER_BKT - 1; slot >= 0; slot--) {// why to 0? 
-					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);
+					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// random access
 					if(slot_tag == key_tag) {
 						LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);
 						if(log_head - log_offset > LOG_SIZE) {// be covered and recycled, can't find out
@@ -105,23 +105,23 @@ void process_pipeline(struct ctrl_blk *cb)
 					}
 				}
 				if(key_in_index == 0) {
-					server_resp_area[ras].len = GET_FAIL_LEN_1;// tag not found 
+					server_resp_area[ras].len = GET_FAIL_LEN_1;// not found in index : 20001
 				}
 			}
 		}	// END 1st pipeline stage
 		if(k == 2) {
 			if(req_type == GET_TYPE) {		// GET
-				int slot = pipeline[ind].get_slot;
-				int key_still_in_index = 0, key_in_log = 0;
+				int slot = pipeline[ind].get_slot;// the id in bkt which was got at previous stage(k==1)
+				int key_still_in_index = 0, key_in_log = 0;// important
 
-				int slot_tag = SLOT_TO_TAG(key_bkt[slot]);
+				int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// have been accessed
 				if(slot_tag == key_tag) {// why check again??? because may not be found, so the slot are old.
 					key_still_in_index = 1;
 					LL log_offset = SLOT_TO_OFFSET(key_bkt[slot]);
 					LL log_addr = log_offset & LOG_SIZE_;
 					
 					LL *log_key = (LL *) &ht_log[log_addr + KV_KEY_OFFSET];    // fetch : yyt
-					int valid = (log_key[0] == key[0]);// check the key match
+					int valid = (log_key[0] == key[0]);// check the key match, may be covered when k==1
 					#if(KEY_SIZE == 2)
 						valid &= (log_key[1] == key[1]);
 					#endif
@@ -129,25 +129,33 @@ void process_pipeline(struct ctrl_blk *cb)
 						key_in_log = 1;
 						// Copy the log straight to the response and record
 						// that this has been done.
-						SET_PL_IT_MEMCPY_DONE(pipeline[ind]);
+						SET_PL_IT_MEMCPY_DONE(pipeline[ind]);// add tag, means complete
 						memcpy((char *) &server_resp_area[ras], &ht_log[log_addr], S_KV); // set response
 					}
 				}
 				if(key_still_in_index == 0 || key_in_log == 0) {
-					server_resp_area[ras].len = GET_FAIL_LEN_2;
+					server_resp_area[ras].len = GET_FAIL_LEN_2;// not found in log : 20002
 				}
 			}
-			pipeline_out = &pipeline[ind];
+			pipeline_out = &pipeline[ind];// result
 		}
-		key[KEY_SIZE - 1] = 0;	// Zero out polled value again
+		key[KEY_SIZE - 1] = 0;	// Zero out polled value again // A ZHE! ... 
 	}
 }
 
 void run_server(struct ctrl_blk *cb)
 {
-	if(cb->id == 0) {// 0th process one server do nothing (only creat QP which receives RDMA WRITE) 
-		sleep(1000000000);
-	}
+	if(cb->id == 0) {// 0th process one server do nothing (only creat QP which receives RDMA WRITE)
+        while(1){
+            /*
+			for(int i=0;i<REQ_MEMSIZE;i++){
+                fprintf(stderr, "%d:%d ", i, (int)((char*)server_req_area)[i]);
+            }
+            fprintf(stderr, "\n");
+			*/
+            sleep(1);
+        }
+    }
 
 	struct ibv_send_wr *bad_send_wr;
 
@@ -171,7 +179,7 @@ void run_server(struct ctrl_blk *cb)
 	}
 
 	clock_gettime(CLOCK_REALTIME, &start);
-	while(1) {
+	for(int cc = 0 ; ; cc++) {
 		for(i = 0; i < NUM_CLIENTS; i++) {
 			// usleep(200000);
 			if((num_resp & M_1_) == M_1_ && num_resp > 0 && num_resp != last_resp) {
@@ -186,13 +194,19 @@ void run_server(struct ctrl_blk *cb)
 
 			// Poll for a new request
 			int req_ind = req_lo[i] + (req_num[i] & WINDOW_SIZE_);//offset = req_num % window_size
+            if(cc % M_128 == 0){
+                debug(stderr, "CHECK addr %lld\n", (LL)&server_req_area[req_ind]);
+                debug(stderr, "OFFSET id %lld\n", (LL)req_ind);
+            }
 			if((char) server_req_area[req_ind].key[KEY_SIZE - 1] == 0) {
 				failed_polls ++;
 				if(failed_polls < FAIL_LIM) {//failed_polls == 100 -> send "nope"
 					continue;
 				}
 			}
-
+			if((char) server_req_area[req_ind].key[KEY_SIZE - 1] != 0){//add by yyt
+				debug(stderr, "Server %d, receive a request\n", cb->id);
+			}
 			// Issue prefetches before computation
 			if(failed_polls < FAIL_LIM) {
 				int key_bkt_num = KEY_TO_BUCKET(server_req_area[req_ind].key[0]);
@@ -205,41 +219,44 @@ void run_server(struct ctrl_blk *cb)
 					__builtin_prefetch(&ht_index[key_bkt_num], 0, 3);
 				}
 			}
-
-			// Move stuff forward in the pipeline
+			debug(stderr, "before pipe\n");
 			process_pipeline(cb);
-
+			debug(stderr, "after pipe\n");
+			
 			// Process the pipeline's output. pipeline_out is a pointer to a
 			// pipeline slot. The new request will get pushed into this slot.
 			// Process the output *before* pushing the new request in.
 
 			// Is the output legit?
 			if(pipeline_out->req_type != DUMMY_TYPE && pipeline_out->req_type != EMPTY_TYPE) {	
-				int cn = pipeline_out->cn & 0xff;
+				int cn = pipeline_out->cn & 0xff;// get client number only
 				int ras = pipeline_out->req_area_slot;
 
 				cb->wr.wr.ud.ah = cb->ah[cn];
 				cb->wr.wr.ud.remote_qpn = cb->remote_dgram_qp_attrs[cn].qpn;
-				cb->wr.wr.ud.remote_qkey = 0x11111111;
+				cb->wr.wr.ud.remote_qkey = 0x11111111;// interesting
 
 				cb->wr.send_flags = (num_resp & WS_SERVER_) == 0 ?
-					MY_SEND_INLINE | IBV_SEND_SIGNALED : MY_SEND_INLINE;
+					MY_SEND_INLINE | IBV_SEND_SIGNALED : MY_SEND_INLINE;// inline as well
 				if((num_resp & WS_SERVER_) == WS_SERVER_) {
 					poll_dgram_cq(1, cb, 0);
 				}
 
 				if(pipeline_out->req_type == PUT_TYPE) {		// PUT response
 					cb->sgl.addr = (uint64_t) (unsigned long) &server_resp_area[ras]; // set in pipeline
-					cb->wr.sg_list->length = 1;// ???
+					cb->wr.sg_list->length = 1;// return 1 byte? what's in it? zero?
 				} else if(pipeline_out->req_type == GET_TYPE) {
 					cb->sgl.addr = (uint64_t) (unsigned long) &server_resp_area[ras];
-					cb->wr.sg_list->length = KV_KEY_OFFSET;
+					cb->wr.sg_list->length = KV_KEY_OFFSET;// return length and value, wrong number will set in length
 				} else {
 					fprintf(stderr, "No type?!\n");
 					exit(0);
 				}
-
+				cb->wr.next = NULL;// bug again
+				
+				debug(stderr, "before send a RESP back\n");
 				ret = ibv_post_send(cb->dgram_qp[0], &cb->wr, &bad_send_wr);
+				debug(stderr, "after send a RESP back\n");
 				CPE(ret, "ibv_post_send error", ret);
 				
 				num_resp++;
@@ -249,7 +266,7 @@ void run_server(struct ctrl_blk *cb)
 			// The index in the pipeline where the new item will be pushed
 			int pipeline_index = tot_pipelined & 1;
 
-			if(failed_polls < FAIL_LIM) {
+			if(failed_polls < FAIL_LIM) {// a new REQ
 				if(server_req_area[req_ind].len == 0) {
 					pipeline[pipeline_index].req_type = GET_TYPE;
 				} else {
@@ -258,12 +275,12 @@ void run_server(struct ctrl_blk *cb)
 
 				pipeline[pipeline_index].kv = (struct KV *) &server_req_area[req_ind];
 				pipeline[pipeline_index].cn = i;
-				pipeline[pipeline_index].req_area_slot = req_ind;
+				pipeline[pipeline_index].req_area_slot = req_ind;// the id in req_area
 
 				// Store the polled value in the pipeline item and make it zero
 				// in the request region
 				pipeline[pipeline_index].poll_val = 
-					server_req_area[req_ind].key[KEY_SIZE - 1];
+					server_req_area[req_ind].key[KEY_SIZE - 1];//
 
 				// Zero out the polled key so that this request is not detected again.
 				// Make the len field zero. If a new request is detected an len is
@@ -287,7 +304,7 @@ void run_server(struct ctrl_blk *cb)
 void post_recv(struct ctrl_blk *cb, int iter_, int sn)
 {
 	struct ibv_sge list = {
-		.addr	= (uintptr_t) &client_resp_area[(sn * WINDOW_SIZE) + iter_],
+		.addr	= (uintptr_t) &client_resp_area[(sn * WINDOW_SIZE) + iter_],// right position of resp_area
 		.length = S_UD_KV,
 		.lkey	= client_resp_area_mr->lkey
 	};
@@ -342,6 +359,7 @@ void run_client(struct ctrl_blk *cb)
 	LL *key_corpus = gen_key_corpus(cb->id);
 
 	// Pre-post some RECVs in slot order for the servers
+	debug(stderr, "in post_recv\n");
 	int serv_i;
 	for(serv_i = 1; serv_i < NUM_SERVERS; serv_i ++) {
 		int recv_i;
@@ -349,6 +367,7 @@ void run_client(struct ctrl_blk *cb)
 			post_recv(cb, recv_i & WINDOW_SIZE_, serv_i);
 		}
 	}
+	debug(stderr, "out\n");
 
 	for(iter = 0; iter < NUM_ITER; iter++) {
 		// usleep(200000);
@@ -405,9 +424,12 @@ void run_client(struct ctrl_blk *cb)
 
 		clock_gettime(CLOCK_REALTIME, &op_start[iter_]);
 		
-		cb->wr.send_flags = (num_req & S_DEPTH_) == 0 ?
-			MY_SEND_INLINE | IBV_SEND_SIGNALED : MY_SEND_INLINE;
-		if((num_req & S_DEPTH_) == S_DEPTH_) {
+		cb->wr.send_flags = (num_req & S_DEPTH_) == 0 ?		// ??? yyt : 
+			MY_SEND_INLINE | IBV_SEND_SIGNALED : MY_SEND_INLINE;// at creat_qp we have set max_inline_data 
+																// inline data will be stored in WQE
+																// lkey will not checked in this modulo
+																// even don't need to register a memory region
+		if((num_req & S_DEPTH_) == S_DEPTH_) {				// every 512 responses, clear CQ and send a ACK
 			poll_conn_cq(1, cb, 0);
 		}
 
@@ -422,13 +444,21 @@ void run_client(struct ctrl_blk *cb)
 			cb->wr.sg_list->length = S_KV;
 			cb->wr.wr.rdma.remote_addr = server_req_area_stag[0].buf + 
 				(req_offset * S_KV);
-		}
-
+		}// in HERD every server_req_area_stag[i].buf is the same
+		debug(stderr, "WRITE addr %lld\n", (LL) cb->wr.wr.rdma.remote_addr);
+        debug(stderr, "OFFSET id %lld\n",(LL) req_offset);
+        
 		cb->wr.wr.rdma.rkey = server_req_area_stag[0].rkey;
-
+		
+		//cb->wr.sg_list->lkey = client_req_area_mr -> lkey;//already have done
+		
+		cb->wr.next = NULL;											// huge bug fixed, id = 2
+		cb->wr.wr_id = num_req;											// useful???
 		// Although each client has NUM_SERVERS conn_qps, they only issue RDMA
 		// WRITEs to the 0th server
+		debug(stderr, "before ibv_post_send\n");
 		ret = ibv_post_send(cb->conn_qp[0], &cb->wr, &bad_send_wr);// the rest queues maybe used in CREW modulo
+		debug(stderr, "after ibv_post_send\n"); 
 		                                                          // the num of queue (in use) is NUM_CLIENT
         // server shares memory, so need only one QP for WRITE.
         // SEND/WRITE/READ is all through this by set wr.opcode
@@ -437,7 +467,7 @@ void run_client(struct ctrl_blk *cb)
 		num_req_arr[sn]++;
 		num_req ++;
 
-		if(num_req - num_resp == WINDOW_SIZE) {   // 4 items a group
+		if(num_req - num_resp == WINDOW_SIZE) {   // remain 4 in flight
 			int rws = num_resp & WINDOW_SIZE_;		// Response window slot
 			int rsn = sn_arr[rws];					// Response server number
 			int ras = (rsn * WINDOW_SIZE) + (num_resp_arr[rsn] & WINDOW_SIZE_);
@@ -456,6 +486,7 @@ void run_client(struct ctrl_blk *cb)
 				fprintf(stderr, "Bad recv wc status %d\n", wc[0].status);
 				exit(0);
 			}
+			debug(stderr, "client receive a RESP\n");
 		
 			// If it was a GET, and it succeeded, check it!
 			if(pndng_keys[rws] != 0) {
@@ -509,6 +540,13 @@ void run_client(struct ctrl_blk *cb)
  */ 
 int main(int argc, char *argv[])
 {
+	int server_id = atoi(argv[1]);
+	int pid = (int) getpid();
+	fprintf(stderr,"pid: %d\n",pid);
+	FILE *kill_all = fopen("kill_all.sh",server_id?"a":"w");
+	fprintf(kill_all, "sudo kill -9 %d\n", pid);
+	fclose(kill_all);
+	
 	int i;
 	struct ibv_device **dev_list;
 	struct ibv_device *ib_dev;
@@ -540,7 +578,7 @@ int main(int argc, char *argv[])
 		// The clients don't need an address handle for the servers UD QPs
 		ctx->local_dgram_qp_attrs = (struct qp_attr *) malloc(NUM_SERVERS * S_QPA);
 	} else {
-		ctx->is_client = 0;
+		ctx->is_client = 0; // huge bug fixed, id = 1
 		ctx->sock_port = atoi(argv[2]);
 		ctx->num_conn_qps = NUM_CLIENTS;
 		ctx->num_remote_dgram_qps = NUM_CLIENTS;
@@ -559,7 +597,8 @@ int main(int argc, char *argv[])
 
     
 
-	ib_dev = dev_list[is_roce() == 1 ? 1 : 0];//服务器上有 [0] = mlx5_1, [1] = mlx5_0 两个 
+	//ib_dev = dev_list[is_roce() == 1 ? 1 : 0];//服务器上有 [0] = mlx5_1, [1] = mlx5_0 两个 
+	ib_dev = dev_list[0]; 
 	CPE(!ib_dev, "IB device not found", 0);
 
 	// Create queue pairs and modify them to INIT
@@ -601,13 +640,12 @@ int main(int argc, char *argv[])
 
 	// Exchange queue pair attributes
 	fprintf(stderr,"%s\n",ctx->is_client?"in exch_client":"in exch_server");
-	fflush(stderr);
 	if(ctx->is_client) {
 		client_exch_dest(ctx);
 	} else {
 		server_exch_dest(ctx); // and modify connected queues to RTR & RTS
 	}
-
+	fprintf(stderr,"out\n");
 	// The server creates address handles for every clients' UD QP
 	if(!ctx->is_client) {
 		for(i = 0; i < NUM_CLIENTS; i++) {
@@ -635,9 +673,9 @@ int main(int argc, char *argv[])
 			CPE(!ctx->ah[i], "Failed to create ah", i);
 		}
 	}
-
+	fprintf(stderr,"in modify_dgram_qp_to_rts\n");
 	modify_dgram_qp_to_rts(ctx);
-
+	fprintf(stderr,"out\n");
 	// Move the client's connected QPs through RTR and RTS stages
 	if (ctx->is_client) {
 		for(i = 0; i < NUM_SERVERS; i++) {
@@ -647,7 +685,7 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
-	fprintf(stderr,"%s\n",ctx->is_client?"in exch_client":"in exch_server");
+	fprintf(stderr,"%s\n",ctx->is_client?"in run_client":"in run_server");
 	if(ctx->is_client) {
 		run_client(ctx);
 	} else {

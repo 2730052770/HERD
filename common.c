@@ -128,6 +128,7 @@ void modify_qp_to_init(struct ctrl_blk *ctx)
 		.pkey_index		= 0,// divide region of net by this number, maybe keeping it same is OK.
 		.port_num		= IB_PHYS_PORT,
 		.qkey 			= 0x11111111//It seems that it is "QUEUE KEY"? For datagram operation.
+		// accessflags??? 
 	};
 
 	for(i = 0; i < ctx->num_local_dgram_qps; i++) {
@@ -153,6 +154,7 @@ void modify_qp_to_init(struct ctrl_blk *ctx)
 		}
 	}
 }
+
 
 // Create RDMA request and response regions for the clients and the server
 int setup_buffers(struct ctrl_blk *cb)
@@ -182,33 +184,37 @@ int setup_buffers(struct ctrl_blk *cb)
 
 		if(cb->id == 0) {// only one server process do this.
 			// Create and register master server's request region
-			int sid = shmget(REQ_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);//key possibly conflict
+			int sid = shmget(REQ_AREA_SHM_KEY, MEM_REQUIRE, IPC_CREAT | 0666 | SHM_HUGETLB);//key possibly conflict
             //4/2/1 = read/write/execute, for user/group/others
             //shared memory for process communication (jin cheng)
             //see http://support.sas.com/documentation/onlinedoc/ccompiler/doc700/html/lr2/z2101586.htm
 			CPE(sid < 0, "Master server request area shmget() failed\n", sid);
 
 			server_req_area = shmat(sid, 0, 0);// attach
-			memset((char *) server_req_area, 0, M_2);
-			server_req_area_mr = ibv_reg_mr(cb->pd, (char *)server_req_area, M_2, FLAGS);
+			//server_req_area = (struct KV*)ALIGN4K(server_req_area);
+			memset((char *) server_req_area, 0, REQ_MEMSIZE);
+			server_req_area_mr = ibv_reg_mr(cb->pd, (char *)server_req_area, REQ_MEMSIZE, FLAGS);
 			CPE(!server_req_area_mr, "Failed to register server's request area", errno);
 
 			// Create and register master server's response region
-			sid = shmget(RESP_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
-			CPE(sid < 0, "Master server response area shmget() failed\n", sid);
-			server_resp_area = shmat(sid, 0, 0);
-			memset((char *) server_resp_area, 0, M_2);
-			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *)server_resp_area, M_2, FLAGS);
+			//sid = shmget(RESP_AREA_SHM_KEY, M_2, IPC_CREAT | 0666 | SHM_HUGETLB);
+			//CPE(sid < 0, "Master server response area shmget() failed\n", sid);
+			//server_resp_area = shmat(sid, 0, 0);
+            server_resp_area = (struct KV*)(REQ_MEMSIZE + (char*)server_req_area);
+			memset((char *) server_resp_area, 0, REQ_MEMSIZE);
+			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *)server_resp_area, REQ_MEMSIZE, FLAGS);
 			CPE(!server_resp_area_mr, "Failed to register server's response area", errno);
 		} else {
 			// For a slave server, map and register the regions created by the master
-			int sid = shmget(REQ_AREA_SHM_KEY, REQ_AC * S_KV, SHM_HUGETLB | 0666);
+			int sid = shmget(REQ_AREA_SHM_KEY, MEM_REQUIRE, SHM_HUGETLB | 0666);
 			server_req_area = shmat(sid, 0, 0);
-			server_req_area_mr = ibv_reg_mr(cb->pd, (char *) server_req_area, M_2, FLAGS);
+			//server_req_area = (struct KV*)ALIGN4K(server_req_area);
+			server_req_area_mr = ibv_reg_mr(cb->pd, (char *) server_req_area, REQ_MEMSIZE, FLAGS);
 
-			sid = shmget(RESP_AREA_SHM_KEY, REQ_AC * S_KV, SHM_HUGETLB | 0666);
-			server_resp_area = shmat(sid, 0, 0);
-			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *) server_resp_area, M_2, FLAGS);
+			//sid = shmget(RESP_AREA_SHM_KEY, REQ_MEMSIZE, SHM_HUGETLB | 0666);
+			//server_resp_area = shmat(sid, 0, 0);
+			server_resp_area = (struct KV*)(REQ_MEMSIZE + (char*)server_req_area);
+			server_resp_area_mr = ibv_reg_mr(cb->pd, (char *) server_resp_area, REQ_MEMSIZE, FLAGS);
 		}
 
 		cb->wr.opcode = IBV_WR_SEND;//sample wr in server
@@ -413,29 +419,37 @@ void init_ht(struct ctrl_blk *cb)
 	if(USE_HUGEPAGE) {
 		shm_flags |= SHM_HUGETLB;
 	}
-	int ht_index_sid = shmget(BASE_HT_INDEX_SHM_KEY + cb->id, 
-		NUM_IDX_BKTS * S_IDX_BKT, shm_flags);
-	if(ht_index_sid == -1) {
-		fprintf(stderr, "shmget Error! Failed to create index\n");
-		system("cat /sys/devices/system/node/*/meminfo | grep Huge");
-		exit(0);
+	
+    //int ht_index_sid = shmget(BASE_HT_INDEX_SHM_KEY + cb->id,				\
+		NUM_IDX_BKTS * S_IDX_BKT, shm_flags);								\
+	if(ht_index_sid == -1) {												\
+		fprintf(stderr, "shmget Error! Failed to create index\n");			\
+		system("cat /sys/devices/system/node/*/meminfo | grep Huge");		\
+		exit(0);															\
 	}
 	
-	ht_index = (struct IDX_BKT *) shmat(ht_index_sid, 0, 0);
+	
+	//ht_index = (struct IDX_BKT *) shmat(ht_index_sid, 0, 0);
+	
+	ht_index = (struct IDX_BKT *)(REQ_MEMSIZE_ALIGNED + (cb->id - 1) * IDX_AND_LOG_MEMSIZE_ALIGNED
+				 + (char *)server_resp_area);
+	
+	
 	for(bkt_i = 0; bkt_i < NUM_IDX_BKTS; bkt_i ++) {
 		for(slot_i = 0; slot_i < SLOTS_PER_BKT; slot_i ++) {
 			ht_index[bkt_i].slot[slot_i] = INVALID_SLOT;
 		}		
 	}
 
-	int ht_log_sid = shmget(BASE_HT_LOG_SHM_KEY + cb->id,
-		LOG_SIZE, shm_flags);
-	if(ht_log_sid == -1) {
-		fprintf(stderr, "shmget Error! Failed to create circular log\n");
-		system("cat /sys/devices/system/node/*/meminfo | grep Huge");
-		exit(0);
+	//int ht_log_sid = shmget(BASE_HT_LOG_SHM_KEY + cb->id,					\
+		LOG_SIZE, shm_flags);												\
+	if(ht_log_sid == -1) {													\
+		fprintf(stderr, "shmget Error! Failed to create circular log\n");	\
+		system("cat /sys/devices/system/node/*/meminfo | grep Huge");		\
+		exit(0);															\
 	}	
-	ht_log = shmat(ht_log_sid, 0, 0);
+	//ht_log = shmat(ht_log_sid, 0, 0);
+	ht_log = IDX_MEMSIZE_ALIGNED + (char *)ht_index ; // is (char*)
 	memset(ht_log, 0, LOG_SIZE);
 }
 

@@ -1,8 +1,13 @@
 # Action:
 #	1. Run num_processes client processes
+if [ $# -ne 1 ]
+then
+	echo "use \"run-machine NUM\""
+	exit 0
+fi
 
 num_processes=1			# Number of processes per client machine
-export ROCE=0
+export ROCE=1
 export APT=1
 
 
@@ -15,7 +20,8 @@ for i in `seq 0 $hi`; do
 
 	if [ $APT -eq 1 ]	# There is only one socket on Apt's r320 nodes
 	then
-		sudo -E ./main $id < servers 1>client-tput/client-$id 2>client-tput/client-$id &
+		# sudo -E ./main $id < servers 1>client-tput/client-$id 2>client-tput/client-$id &
+		sudo -E ./main $id < servers
 	else
 		if [ $ROCE -eq 1 ]	# Susitna's RoCE RNIC is connected to CPU 0
 		then

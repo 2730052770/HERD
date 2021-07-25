@@ -15,9 +15,14 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include <infiniband/verbs.h>
+#include <unistd.h>
+#include <netinet/in.h>
 #include "sizes.h"
 
-#include <netinet/in.h>
+//by yyt
+#define ALIGN4K(x) ((0xfffull+(unsigned long long)(x))>>12<<12)
+
+
 
 #define FAIL_LIM 100			// # of failed polls before a server advances its pipeline
 #define ZIPF 0					// Use ZIPF distributed workload
@@ -64,8 +69,8 @@
 #define NUM_ITER 1000000000		// Total number of iterations performed by a client
 
 #define REQ_AC (NUM_CLIENTS * WINDOW_SIZE * NUM_SERVERS)
-#define RESP_AC (WINDOW_SIZE * NUM_SERVERS)
 
+#define RESP_AC (WINDOW_SIZE * NUM_SERVERS)
 // SHM keys for servers. The request and response area is shared among server processes
 // and needs a single key. For lossy index and circular log, each server uses a separate
 // key := BASE + cb->id. Number of server processes must be less than 32.
@@ -248,3 +253,21 @@ inline uint32_t fastrand(uint64_t* seed);
 
 #define SET_PL_IT_MEMCPY_DONE(pl_it) (pl_it.cn |= 0xf00)
 #define GET_PL_IT_MEMCPY_DONE(pl_it) (pl_it->cn & 0xf00)
+
+// by yyt
+
+#define REQ_MEMSIZE (REQ_AC * S_KV)
+#define REQ_MEMSIZE_ALIGNED ALIGN4K(REQ_MEMSIZE)
+#define IDX_MEMSIZE (NUM_IDX_BKTS * S_IDX_BKT)
+#define IDX_MEMSIZE_ALIGNED ALIGN4K(IDX_MEMSIZE)
+#define LOG_MEMSIZE LOG_SIZE
+#define LOG_MEMSIZE_ALIGNED ALIGN4K(LOG_SIZE)
+#define IDX_AND_LOG_MEMSIZE_ALIGNED (IDX_MEMSIZE_ALIGNED + LOG_MEMSIZE_ALIGNED)
+#define MEM_REQUIRE ((1<<30)-(1<<20))
+//#define DEBUG
+
+#ifdef DEBUG
+#define debug fprintf
+#else 
+#define debug
+#endif

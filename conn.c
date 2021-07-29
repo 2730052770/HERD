@@ -93,16 +93,13 @@ void client_exch_dest(struct ctrl_blk *cb)
 	int sockfd, i, sock_port;
 
 	struct sockaddr_in serv_addr;
-	struct hostent *server;
-	char server_name[20],sock_port_str[20];
 
 	for(i = 0; i < NUM_SERVERS; i++) {
 		// Find the server name and port from the "servers" file
-		scanf("%s", server_name);
-		scanf("%s", sock_port_str);
-		printf("At client %d, server_name = %s, port = %s\n", cb->id, 
-			server_name, sock_port_str);
-		sock_port = atoi(sock_port_str);
+		sock_port = start_port + i;
+		printf("At client %d, server_ip = %s, port = %d\n", cb->id, 
+			server_ip, sock_port);
+		
 
 		sockfd = socket(AF_INET, SOCK_STREAM, 0);
 		CPE(sockfd < 0, "Error opening socket", 0);
@@ -119,7 +116,7 @@ void client_exch_dest(struct ctrl_blk *cb)
 		bzero((char *) &serv_addr, sizeof(serv_addr));    
 		serv_addr.sin_family = AF_INET;// ipv4 
 
-		inet_aton(server_name, &serv_addr.sin_addr);///////////
+		inet_aton(server_ip, &serv_addr.sin_addr);///////////
 
 
 		/* bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr,

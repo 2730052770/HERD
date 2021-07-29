@@ -188,7 +188,11 @@ int setup_buffers(struct ctrl_blk *cb)
             //4/2/1 = read/write/execute, for user/group/others
             //shared memory for process communication (jin cheng)
             //see http://support.sas.com/documentation/onlinedoc/ccompiler/doc700/html/lr2/z2101586.htm
-			CPE(sid < 0, "Master server request area shmget() failed\n", sid);
+            if(sid == -1) {												
+				fprintf(stderr, "shmget Error! Failed to create memory\n");			
+				system("cat /sys/devices/system/node/*/meminfo | grep Huge");		
+				exit(-1);															
+			}
 
 			server_req_area = shmat(sid, 0, 0);// attach
 			//server_req_area = (struct KV*)ALIGN4K(server_req_area);
@@ -335,9 +339,10 @@ void poll_conn_cq(int num_completions, struct ctrl_blk *cb, int cq_num)
 }
 
 // Check if the GET result (val) matches the expected key (exp)
-int valcheck(volatile char *val, LL exp) 
+int valcheck(volatile struct KV *kv, LL exp) 
 {
 	int i = 0, ok = 1;
+	volatile char *val = kv->value;
 	for(i = 0; i < VALUE_SIZE; i++) {
 		if(val[i] != (char) exp) {
 			ok = 0;
@@ -357,6 +362,19 @@ int valcheck(volatile char *val, LL exp)
 			fprintf(stderr, "%d ", val[i]);
 		}
 		fprintf(stderr, "\n");
+		/*
+		fprintf(stderr, "Expected key:\n");
+		for(i = 0; i < sizeof(long long); i++) {
+			fprintf(stderr, "%d ", (int)((char*)&exp)[i]);
+		}
+		fprintf(stderr, "\n");
+		fprintf(stderr, "Received key:\n");
+		for(i = 0; i < sizeof(long long); i++) {
+			fprintf(stderr, "%d ", (int)((char*)kv->key)[i]);
+		}
+		fprintf(stderr, "\n");
+		*/
+		fprintf(stderr, "Received len %d:\n",kv->len);
 	}
 	return ok;		// TRUE
 }
@@ -430,9 +448,8 @@ void init_ht(struct ctrl_blk *cb)
 	
 	
 	//ht_index = (struct IDX_BKT *) shmat(ht_index_sid, 0, 0);
-	
-	ht_index = (struct IDX_BKT *)(REQ_MEMSIZE_ALIGNED + (cb->id - 1) * IDX_AND_LOG_MEMSIZE_ALIGNED
-				 + (char *)server_resp_area);
+	char *base = (char *)ALIGN2M(REQ_MEMSIZE + (char *)server_resp_area);
+	ht_index = (struct IDX_BKT *)(base + (cb->id - 1) * IDX_AND_LOG_MEMSIZE);
 	
 	
 	for(bkt_i = 0; bkt_i < NUM_IDX_BKTS; bkt_i ++) {
@@ -449,18 +466,13 @@ void init_ht(struct ctrl_blk *cb)
 		exit(0);															\
 	}	
 	//ht_log = shmat(ht_log_sid, 0, 0);
-	ht_log = IDX_MEMSIZE_ALIGNED + (char *)ht_index ; // is (char*)
+	ht_log = IDX_MEMSIZE + (char *)ht_index ; // is (char*)
 	memset(ht_log, 0, LOG_SIZE);
 }
 
 int is_roce(void)
 {
-	char *env = getenv("ROCE");
-	if(env == NULL) {		// If ROCE environment var is not set
-		fprintf(stderr, "ROCE not set\n");
-		exit(-1);
-	}
-	return atoi(env);
+	return enable_roce;
 }
 
 inline uint32_t fastrand(uint64_t* seed)

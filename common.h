@@ -2,6 +2,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sched.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/types.h>
@@ -18,11 +20,7 @@
 #include <unistd.h>
 #include <netinet/in.h>
 #include "sizes.h"
-
-//by yyt
-#define ALIGN4K(x) ((0xfffull+(unsigned long long)(x))>>12<<12)
-
-
+#include "num.h"
 
 #define FAIL_LIM 100			// # of failed polls before a server advances its pipeline
 #define ZIPF 0					// Use ZIPF distributed workload
@@ -44,9 +42,6 @@
 #else
 	#define MY_SEND_INLINE IBV_SEND_INLINE
 #endif
-
-#define NUM_CLIENTS 1			// Number of client processes
-#define NUM_SERVERS 3			// Number of server processes
 
 #define Q_DEPTH 1024			// Size of all created queues
 #define S_DEPTH 512
@@ -134,6 +129,7 @@ struct PL_IT {
 	// a new request. If this is not done, the server can loop around the window
 	// and detect an old request again
 	long long poll_val;
+	uint16_t kv_len;
 };
 #define S_PL_IT sizeof(struct PL_IT)
 struct PL_IT pipeline[2];		// The pipeline
@@ -236,7 +232,7 @@ inline long long get_cycles();
 void poll_conn_cq(int num_completions, struct ctrl_blk *cb, int cq_num);
 void poll_dgram_cq(int num_completions, struct ctrl_blk *cb, int cq_num);
 
-int valcheck(volatile char *val, long long exp);
+int valcheck(volatile struct KV *kv, long long exp);
 
 long long* gen_key_corpus(int cn);
 void init_ht(struct ctrl_blk *cb);
@@ -256,14 +252,21 @@ inline uint32_t fastrand(uint64_t* seed);
 
 // by yyt
 
+int server_id;
+char *server_ip;
+int start_port;
+int enable_roce;
+
+#define ALIGN4K(x) ((0xfffull+(unsigned long long)(x))>>12<<12)
+#define ALIGN2M(x) ((0x1fffffull+(unsigned long long)(x))>>21<<21)
+
 #define REQ_MEMSIZE (REQ_AC * S_KV)
-#define REQ_MEMSIZE_ALIGNED ALIGN4K(REQ_MEMSIZE)
 #define IDX_MEMSIZE (NUM_IDX_BKTS * S_IDX_BKT)
-#define IDX_MEMSIZE_ALIGNED ALIGN4K(IDX_MEMSIZE)
+// 4M * 64 = 256M
 #define LOG_MEMSIZE LOG_SIZE
-#define LOG_MEMSIZE_ALIGNED ALIGN4K(LOG_SIZE)
-#define IDX_AND_LOG_MEMSIZE_ALIGNED (IDX_MEMSIZE_ALIGNED + LOG_MEMSIZE_ALIGNED)
-#define MEM_REQUIRE ((1<<30)-(1<<20))
+// 128M
+#define IDX_AND_LOG_MEMSIZE (IDX_MEMSIZE + LOG_MEMSIZE)
+#define MEM_REQUIRE (REQ_MEMSIZE * 2 + IDX_AND_LOG_MEMSIZE * (NUM_SERVERS - 1) + M_2)
 //#define DEBUG
 
 #ifdef DEBUG

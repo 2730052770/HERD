@@ -43,7 +43,9 @@ void process_pipeline(struct ctrl_blk *cb)
 		
 		// Set the polled value in the request region temporarily. Must zero it 
 		// out later.
-		key[KEY_SIZE - 1] = pipeline[ind].poll_val;
+		
+		key[KEY_SIZE - 1] = pipeline[ind].poll_val; // should modify by yyt 
+		pipeline[ind].kv->len = pipeline[ind].kv_len;
 				
 		int key_bkt_num = KEY_TO_BUCKET(key[0]);// bucket index
 		int key_tag = KEY_TO_TAG(key[0]);// identity (unique in one bucket)
@@ -75,7 +77,9 @@ void process_pipeline(struct ctrl_blk *cb)
 					// While insertion, we remove collisions.
 					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// same as KEY_TO_TAG()
 					if(slot_tag == key_tag) {
+						// by yyt 
 						key_bkt[slot] = INVALID_SLOT;// why not just store index in key_bkt[slot]???
+						//best_slot = slot; break;
 					}
 				}
 
@@ -90,6 +94,9 @@ void process_pipeline(struct ctrl_blk *cb)
 				log_head += S_KV;
 			} else {	/*GET*/
 				int slot, key_in_index = 0;
+				
+				pipeline[ind].get_slot = -1;// add by yyt
+				
 				for(slot = SLOTS_PER_BKT - 1; slot >= 0; slot--) {// why to 0? 
 					int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// random access
 					if(slot_tag == key_tag) {
@@ -110,10 +117,10 @@ void process_pipeline(struct ctrl_blk *cb)
 			}
 		}	// END 1st pipeline stage
 		if(k == 2) {
-			if(req_type == GET_TYPE) {		// GET
+			if(req_type == GET_TYPE && pipeline[ind].get_slot != -1) {		// GET
 				int slot = pipeline[ind].get_slot;// the id in bkt which was got at previous stage(k==1)
 				int key_still_in_index = 0, key_in_log = 0;// important
-
+				
 				int slot_tag = SLOT_TO_TAG(key_bkt[slot]);// have been accessed
 				if(slot_tag == key_tag) {// why check again??? because may not be found, so the slot are old.
 					key_still_in_index = 1;
@@ -125,21 +132,31 @@ void process_pipeline(struct ctrl_blk *cb)
 					#if(KEY_SIZE == 2)
 						valid &= (log_key[1] == key[1]);
 					#endif
+					
+					//int valid = log_head - log_offset <= LOG_SIZE;
 					if(valid) {
 						key_in_log = 1;
 						// Copy the log straight to the response and record
 						// that this has been done.
 						SET_PL_IT_MEMCPY_DONE(pipeline[ind]);// add tag, means complete
 						memcpy((char *) &server_resp_area[ras], &ht_log[log_addr], S_KV); // set response
+						if((char)server_resp_area[ras].key[0] == 0 || server_resp_area[ras].len == 0){
+							fprintf(stderr, "server resp key/len = 0\n");
+							exit(1);
+						}
 					}
 				}
-				if(key_still_in_index == 0 || key_in_log == 0) {
+				if(key_still_in_index == 0) {
+					server_resp_area[ras].len = GET_FAIL_LEN_1;// not found in log : 20002
+				}
+				else if(key_still_in_index == 1 && key_in_log == 0) {
 					server_resp_area[ras].len = GET_FAIL_LEN_2;// not found in log : 20002
 				}
 			}
 			pipeline_out = &pipeline[ind];// result
 		}
-		key[KEY_SIZE - 1] = 0;	// Zero out polled value again // A ZHE! ... 
+		key[KEY_SIZE - 1] = 0;	// should modify by yyt 
+		pipeline[ind].kv->len = 0;
 	}
 }
 
@@ -254,6 +271,8 @@ void run_server(struct ctrl_blk *cb)
 				}
 				cb->wr.next = NULL;// bug again
 				
+				
+				
 				debug(stderr, "before send a RESP back\n");
 				ret = ibv_post_send(cb->dgram_qp[0], &cb->wr, &bad_send_wr);
 				debug(stderr, "after send a RESP back\n");
@@ -279,14 +298,16 @@ void run_server(struct ctrl_blk *cb)
 
 				// Store the polled value in the pipeline item and make it zero
 				// in the request region
-				pipeline[pipeline_index].poll_val = 
-					server_req_area[req_ind].key[KEY_SIZE - 1];//
-
+				pipeline[pipeline_index].poll_val = server_req_area[req_ind].key[KEY_SIZE - 1];//
+				pipeline[pipeline_index].kv_len = server_req_area[req_ind].len;//
 				// Zero out the polled key so that this request is not detected again.
 				// Make the len field zero. If a new request is detected an len is
 				// still 0, it means that the new request is a GET.
+				
+				
+				// modified by yyt, set 0 later
 				server_req_area[req_ind].key[KEY_SIZE - 1] = 0;
-				server_req_area[req_ind].len = 0;
+				server_req_area[req_ind].len = 0;// must be set to 0, because GET only give key
 
 				req_num[i] ++;
 			} else {
@@ -396,7 +417,7 @@ void run_client(struct ctrl_blk *cb)
 		}
 
 		// First, we PUT all our keys.
-		if(rand() % 100 <= PUT_PERCENT || iter < NUM_KEYS) {// 2^20
+		if(rand() % 100 < PUT_PERCENT || iter < NUM_KEYS) {// 2^20
 			req_kv->key[0] = key_corpus[key_i];
 			#if(KEY_SIZE == 2)
 				req_kv->key[1] = key_corpus[key_i];
@@ -491,7 +512,7 @@ void run_client(struct ctrl_blk *cb)
 			// If it was a GET, and it succeeded, check it!
 			if(pndng_keys[rws] != 0) {
 				if(client_resp_area[ras].kv.len < GET_FAIL_LEN_1) {
-					if(!valcheck(client_resp_area[ras].kv.value,           // check value
+					if(!valcheck(&client_resp_area[ras].kv,           // check value
 						pndng_keys[rws])) {
 						fprintf(stderr, "Client %d get() failed in iter %d. ", 
 							cb->id, num_resp);
@@ -538,12 +559,21 @@ void run_client(struct ctrl_blk *cb)
  * Server: sudo ./main <sock_port> <id>
  * Client: sudo ./maun <sock_port> <id> <server_ip>
  */ 
+void help(){
+	puts("use \"./run.sh [$id] ([$SERVER_IP]) [$START_PORT] [$ENABLE_ROCE = 0/1]\"");
+}
 int main(int argc, char *argv[])
 {
-	int server_id = atoi(argv[1]);
+	if(argc < 4 || argc > 5){
+		help();
+		return 0;
+	}
+	server_id = atoi(argv[1]);
 	int pid = (int) getpid();
 	fprintf(stderr,"pid: %d\n",pid);
 	FILE *kill_all = fopen("kill_all.sh",server_id?"a":"w");
+	if(server_id == 0 && argc == 4)
+		fprintf(kill_all, "sudo ipcrm -M %d\n", REQ_AREA_SHM_KEY);
 	fprintf(kill_all, "sudo kill -9 %d\n", pid);
 	fclose(kill_all);
 	
@@ -555,10 +585,13 @@ int main(int argc, char *argv[])
 	srand48(getpid() * time(NULL));		// Required for PSN
 	ctx = malloc(sizeof(struct ctrl_blk));
 	
-	ctx->id = atoi(argv[1]);
+	ctx->id = server_id;
 
 	// Allocate space for queue-pair attributes
-	if (argc == 2) {
+	if (argc == 5) {
+		server_ip = argv[2];
+		start_port = atoi(argv[3]);// global
+		enable_roce = atoi(argv[4]);// global
 		ctx->is_client = 1;
 		ctx->num_conn_qps = NUM_SERVERS;
 		ctx->num_remote_dgram_qps = NUM_SERVERS;
@@ -578,8 +611,20 @@ int main(int argc, char *argv[])
 		// The clients don't need an address handle for the servers UD QPs
 		ctx->local_dgram_qp_attrs = (struct qp_attr *) malloc(NUM_SERVERS * S_QPA);
 	} else {
+		
+		cpu_set_t mask;		// big improvement
+        CPU_ZERO(&mask);    //置空
+        CPU_SET(ctx->id * 2 % 20, &mask);   //设置亲和力值
+        if (sched_setaffinity(0, sizeof(mask), &mask) == -1)//设置线程CPU亲和力
+        {
+            fprintf(stderr, "warning: could not set CPU affinity, continuing...\n");
+        }
+		
+		
+		start_port = atoi(argv[2]);// global
+		enable_roce = atoi(argv[3]);// global
 		ctx->is_client = 0; // huge bug fixed, id = 1
-		ctx->sock_port = atoi(argv[2]);
+		ctx->sock_port = start_port + ctx->id; 
 		ctx->num_conn_qps = NUM_CLIENTS;
 		ctx->num_remote_dgram_qps = NUM_CLIENTS;
 		ctx->num_local_dgram_qps = 1;
@@ -598,7 +643,9 @@ int main(int argc, char *argv[])
     
 
 	//ib_dev = dev_list[is_roce() == 1 ? 1 : 0];//服务器上有 [0] = mlx5_1, [1] = mlx5_0 两个 
+	//ib_dev = ctx->is_client? dev_list[ctx->id & 1] : dev_list[0]; //always slower
 	ib_dev = dev_list[0]; 
+	
 	CPE(!ib_dev, "IB device not found", 0);
 
 	// Create queue pairs and modify them to INIT

@@ -7,4 +7,4 @@ main: common.o conn.o main.o
 
 PHONY: clean
 clean:
-	rm -f *.o main
+	rm  ./*.o main
